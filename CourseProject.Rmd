@@ -1,0 +1,125 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "Hancheng Li"
+date: "2019/2/25"
+output: html_document
+linkcolor: blue
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+```
+
+## Background Information
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it.  
+
+In this project, the goal will be to use data from accelerometers on the **belt, forearm, arm, and dumbell** of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways.  
+
+More information is available from the website [here](http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har) (see the section on the Weight Lifting Exercise Dataset).
+
+## Data Preprocessing
+
+### Load Packages
+This project uses the `caret` (w/ dependencies `lattice` and `ggplot2`) and `randomForest` packages.
+```{r loadpackages}
+library(caret)
+library(randomForest)
+```
+
+### Read Raw Data
+Download (if not downloaded already) and load the original data.
+```{r readdata}
+trainLink <-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testLink <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+if (!file.exists("pml-training.csv")) {
+  download.file(trainLink, destfile = "pml-training.csv", method = "curl")
+}
+trainRaw <- read.csv("pml-training.csv")
+if (!file.exists("pml-testing.csv")) {
+  download.file(testLink, destfile = "pml-testing.csv", method = "curl")
+}
+testRaw <- read.csv("pml-testing.csv")
+```
+
+### Data Cleaning
+
+We first check the complete cases in the dataset and remove the NA values. The columns that contain NAs are all calculated values such as minimum, maximum, standard deviation, etc., but not the original measurements, therefore it is safe to remove them.
+
+```{r deletena}
+sum(complete.cases(trainRaw))
+trainRaw <- trainRaw[, colSums(is.na(trainRaw)) == 0]
+testRaw <- testRaw[, colSums(is.na(testRaw)) == 0]
+```
+
+Then we delete irrelevant columns and all columns that doesn't contain numeric information. We also have to remove the `problem_id` column, which is the first column, from the `testClean` dataset.
+``` {r deleteirrel}
+tempclasse <- trainRaw$classe
+rmTrain <- grepl("^X|timestamp|window", names(trainRaw))
+trainClean <- trainRaw[, !rmTrain]
+trainClean <- trainClean[, sapply(trainClean, is.numeric)]
+# The previous step also deleted the classe variable so we must add it back
+trainClean$classe <- tempclasse
+
+rmTest <- grepl("^X|timestamp|window", names(testRaw))
+testClean <- testRaw[, !rmTest]
+testClean <- testClean[, sapply(testClean, is.numeric)]
+```
+
+Data preprocessing is complete. The dimensions of the training and testing dataset are as follows.
+
+```{r dims}
+dim(trainClean)
+dim(testClean)
+```
+
+## Creating Model
+
+### Setup Cross Validation
+
+For cross validation purposes, we now devide the `trainClean` set into a 70% sub-training set and a 30% sub-testing set. To ensure reproducibility we also manually set the randomization seed to be 1212.
+
+```{r crossvalidation}
+set.seed(1212)
+inTrain <- createDataPartition(trainClean$classe, p = 0.70, list = FALSE)
+subTrain <- trainClean[inTrain, ]
+subTest <- trainClean[-inTrain, ]
+```
+
+### Fit Model and Evaluation
+
+We use a **random forest** algorithm due to its high accuracy, and because it bootstraps samples automatically which removes the effects of outliers. Combined with cross validation we can reduce the overfitting of the model. In this project we choose to use **4-fold** cross validation.
+```{r fitmodel}
+ctrl <- trainControl(method="cv", 4)
+modFit <- train(classe~., method = "rf", data = subTrain,
+                trControl = ctrl, ntree = 300)
+modFit
+```
+
+We now evaluate the model using the sub-Testing dataset, using the confusion matrix.
+```{r confusion}
+pred <- predict(modFit, subTest)
+confusionMatrix(subTest$classe, pred)
+```
+
+The estimated accuracy of the prediction model is:
+```{r accuracy}
+accuracy <- mean(pred == subTest$classe)
+accuracy
+```
+
+The estimated out-of-sample error is one minus the estimated accuracy:
+```{r oose}
+oose <- 1 - accuracy
+oose
+```
+
+The high accuracy and low out-of-sample error shows that the model is satisfactory.
+
+## Predicting the Final Test Set
+
+We now use the model to predict the final `testClean` dataset. But prior to that, we must remove the `problem_id` column, which is the final column, from the data frame. The results are as shown.
+```{r finalpredict}
+testClean <- testClean[, -ncol(testClean)]
+predict(modFit, testClean)
+```
